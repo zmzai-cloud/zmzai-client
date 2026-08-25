@@ -15,6 +15,7 @@
     "dev:mock": "node scripts/mock-bridge.mjs & electron-vite dev"
   },
   "dependencies": {
+    "@zmzai/bridge-protocol": "file:../zmzai-bridge-protocol",
     "ws": "^8.18.0",
     "zod": "^3.23.8"
   },

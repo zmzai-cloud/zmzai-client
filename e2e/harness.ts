@@ -66,7 +66,7 @@ async function main(): Promise<number> {
     width: 400,
     height: 300,
     webPreferences: {
-      preload: join(__dirname, "../out/preload/index.mjs"),
+      preload: join(__dirname, "../out/preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },

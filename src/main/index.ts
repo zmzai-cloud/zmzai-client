@@ -17,7 +17,7 @@ function createWindow(): void {
     title: "zmzai 客户端",
     backgroundColor: "#0f1115",
     webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
+      preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },

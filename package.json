@@ -13,7 +13,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "mock": "node scripts/mock-bridge.mjs",
-    "dev:mock": "node scripts/mock-bridge.mjs & electron-vite dev"
+    "dev:mock": "node scripts/mock-bridge.mjs & electron-vite dev",
+    "e2e:build": "esbuild e2e/harness.ts --bundle --platform=node --format=esm --external:electron --external:ws --external:zod --outfile=e2e/harness.mjs",
+    "e2e": "pnpm build && pnpm e2e:build && electron e2e/harness.mjs",
+    "e2e:node": "esbuild e2e/pilot.ts --bundle --platform=node --format=esm --external:ws --external:zod --outfile=e2e/pilot.mjs && node e2e/pilot.mjs"
   },
   "dependencies": {
     "@zmzai/bridge-protocol": "file:../zmzai-bridge-protocol",
@@ -22,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "esbuild": "^0.21.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/ws": "^8.5.13",
@@ -33,5 +37,8 @@
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild"]
   }
 }

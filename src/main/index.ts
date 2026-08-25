@@ -1,18 +1,12 @@
-import { app, BrowserWindow, Notification, Tray, Menu, ipcMain, nativeImage } from "electron";
+import { app, BrowserWindow, Notification, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
-import { BridgeClient, type ApprovalDecision, type ApprovalRequest, type BridgeEvent, type BridgeState } from "../bridge/bridge-client.js";
 import { loadConfig, type ClientConfig } from "../bridge/config.js";
+import { BridgeRuntime } from "./bridge-runtime.js";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let bridge: BridgeClient | null = null;
 let isQuiting = false;
-let lastStatus: BridgeState = "disconnected";
-let lastStatusDetail: string | undefined;
-
-const pendingApprovals = new Map<string, (allowed: boolean) => void>();
-/** 审批弹窗超时（毫秒），由 config.approvalTimeoutMs 注入；超时默认拒绝 */
-let approvalTimeoutMs = 120_000;
+let runtime: BridgeRuntime | null = null;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -57,67 +51,6 @@ function notify(title: string, body: string, urgency?: "low" | "normal" | "criti
   });
 }
 
-function forwardEvent(e: BridgeEvent): void {
-  if (e.type === "status") {
-    lastStatus = e.state;
-    lastStatusDetail = e.detail;
-  }
-  mainWindow?.webContents.send("bridge:event", e);
-}
-
-function askApproval(req: ApprovalRequest): Promise<ApprovalDecision> {
-  return new Promise<ApprovalDecision>((resolve) => {
-    // 审批超时默认拒绝：弹窗挂起时不静默放行，也不让 dispatch 无限悬置
-    const timer = setTimeout(() => {
-      if (pendingApprovals.has(req.id)) {
-        pendingApprovals.delete(req.id);
-        // 超时由策略兜底，决定来源记为 policy（非用户主动）
-        resolve({ allowed: false, decidedBy: "policy" });
-        mainWindow?.webContents.send("bridge:event", {
-          type: "log",
-          level: "warn",
-          msg: `审批超时（${approvalTimeoutMs}ms），已默认拒绝: ${req.tool} ${req.summary}`,
-        });
-      }
-    }, approvalTimeoutMs);
-    pendingApprovals.set(req.id, (allowed) => {
-      clearTimeout(timer);
-      // 用户主动在弹窗中做出的决定，来源记为 user
-      resolve({ allowed, decidedBy: "user" });
-    });
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("bridge:approval-request", req);
-      notify(`需要授权：${req.tool}`, req.summary, req.risk === "high" ? "critical" : "normal");
-    } else {
-      clearTimeout(timer);
-      pendingApprovals.delete(req.id);
-      // 无窗口可弹，兜底拒绝，来源记为 policy
-      resolve({ allowed: false, decidedBy: "policy" });
-    }
-  });
-}
-
-function buildBridge(config: ClientConfig): BridgeClient {
-  const auditPath = join(app.getPath("userData"), "audit.jsonl");
-  return new BridgeClient(
-    {
-      bridgeUrl: config.bridgeUrl,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      userId: config.userId,
-      bridgePublicKeyPem: config.bridgePublicKeyPem,
-      allowInsecureWs: config.allowInsecureWs,
-      approvedRoots: config.approvedRoots,
-      shellEnabled: config.shellEnabled,
-      execTimeoutMs: config.execTimeoutMs,
-      notify,
-      askApproval,
-      onEvent: forwardEvent,
-    },
-    auditPath,
-  );
-}
-
 function createTray(): void {
   // 不依赖外部图标资源：用空图像 + 标题占位，仍可点击交互
   tray = new Tray(nativeImage.createEmpty());
@@ -129,8 +62,8 @@ function createTray(): void {
       {
         label: "重连云端",
         click: () => {
-          bridge?.disconnect();
-          bridge?.connect();
+          runtime?.bridge?.disconnect();
+          runtime?.bridge?.connect();
         },
       },
       { type: "separator" },
@@ -138,7 +71,7 @@ function createTray(): void {
         label: "退出",
         click: () => {
           isQuiting = true;
-          bridge?.disconnect();
+          runtime?.bridge?.disconnect();
           app.quit();
         },
       },
@@ -146,48 +79,22 @@ function createTray(): void {
   );
 }
 
-function registerIpc(config: ClientConfig): void {
-  ipcMain.handle("bridge:get-state", () => ({
-    status: lastStatus,
-    detail: lastStatusDetail,
-    config: {
-      bridgeUrl: config.bridgeUrl,
-      clientId: config.clientId,
-      userId: config.userId,
-      approvedRoots: config.approvedRoots,
-      shellEnabled: config.shellEnabled,
-    },
-    audit: bridge?.getAuditLog().recent(100) ?? [],
-  }));
-
-  ipcMain.handle("bridge:resolve-approval", (_e, id: string, allowed: boolean) => {
-    const fn = pendingApprovals.get(id);
-    if (fn) {
-      fn(allowed);
-      pendingApprovals.delete(id);
-    }
-    return true;
-  });
-
-  ipcMain.handle("bridge:update-config", (_e, patch: Partial<ClientConfig>) => {
-    if (typeof patch.shellEnabled === "boolean") config.shellEnabled = patch.shellEnabled;
-    if (Array.isArray(patch.approvedRoots)) config.approvedRoots = patch.approvedRoots;
-    if (typeof patch.bridgeUrl === "string") config.bridgeUrl = patch.bridgeUrl;
-    bridge?.disconnect();
-    bridge = buildBridge(config);
-    bridge.connect();
-    return true;
-  });
-}
-
 app.whenReady().then(() => {
-  const config = loadConfig();
-  approvalTimeoutMs = config.approvalTimeoutMs;
+  const config: ClientConfig = loadConfig();
+  runtime = new BridgeRuntime(
+    () => mainWindow,
+    notify,
+    () => config,
+  );
+  runtime.setApprovalTimeoutMs(config.approvalTimeoutMs);
+
   createWindow();
   createTray();
-  registerIpc(config);
-  bridge = buildBridge(config);
-  bridge.connect();
+  runtime.registerIpc();
+
+  runtime.bridge = runtime.buildBridge();
+  runtime.bridge.connect();
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else mainWindow?.show();
@@ -200,5 +107,6 @@ app.on("window-all-closed", () => {
 
 // 确保退出时清理
 app.on("before-quit", () => {
-  bridge?.disconnect();
+  isQuiting = true;
+  runtime?.bridge?.disconnect();
 });

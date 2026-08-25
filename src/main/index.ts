@@ -84,6 +84,7 @@ function buildBridge(config: ClientConfig): BridgeClient {
       clientId: config.clientId,
       clientSecret: config.clientSecret,
       userId: config.userId,
+      bridgePublicKeyPem: config.bridgePublicKeyPem,
       approvedRoots: config.approvedRoots,
       shellEnabled: config.shellEnabled,
       execTimeoutMs: config.execTimeoutMs,

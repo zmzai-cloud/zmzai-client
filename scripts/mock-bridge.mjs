@@ -24,7 +24,7 @@ function sendRequest(ws, tool, params, risk) {
   if (ws.readyState !== ws.OPEN) return;
   const id = nextId();
   ws.send(
-    JSON.stringify({ kind: "tool_request", v: 2, id, tool, params, risk, issuedAt: Date.now() }),
+    JSON.stringify({ kind: "tool_request", v: 3, id, tool, params, risk, issuedAt: Date.now() }),
   );
   console.log(`[mock] 下发 ${tool} (${id})`);
 }
@@ -39,8 +39,8 @@ wss.on("connection", (ws) => {
       return;
     }
     if (msg.kind === "hello") {
-      // v2：签名覆盖 clientId:userId:ts，userId 声明本机归属用户
-      const expect = sign(`${msg.clientId}:${msg.userId}`, msg.ts);
+      // v3：签名覆盖 clientId:userId:nonce:ts，userId 声明归属、nonce 防重放
+      const expect = sign(`${msg.clientId}:${msg.userId}:${msg.nonce}`, msg.ts);
       if (msg.signature !== expect) {
         console.log("[mock] 握手签名校验失败，断开");
         ws.close();
@@ -51,9 +51,10 @@ wss.on("connection", (ws) => {
       ws.send(
         JSON.stringify({
           kind: "welcome",
-          v: 2,
+          v: 3,
           sessionId,
           userId: msg.userId,
+          nonce: msg.nonce,
           ts,
           signature: sign(sessionId, ts),
         }),
@@ -68,7 +69,7 @@ wss.on("connection", (ws) => {
     } else if (msg.kind === "tool_result") {
       console.log(`[mock] 结果 ${msg.id} ok=${msg.ok}`, msg.ok ? "" : `err=${msg.error}`);
     } else if (msg.kind === "ping") {
-      ws.send(JSON.stringify({ kind: "pong", v: 2, ts: Date.now() }));
+      ws.send(JSON.stringify({ kind: "pong", v: 3, ts: Date.now() }));
     }
   });
   ws.on("close", () => console.log("[mock] 客户端断开"));

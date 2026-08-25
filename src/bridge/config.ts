@@ -20,6 +20,8 @@ export interface ClientConfig {
   clientSecret: string;
   /** 本机归属的用户标识（hello 携带、被签名覆盖），云端据此路由 Agent 请求到本机 */
   userId: string;
+  /** 云端桥接端点的公钥 PEM（验 welcome 签名，防伪造云端端点）。生产必须配置；缺省跳过验签。 */
+  bridgePublicKeyPem: string | null;
   approvedRoots: string[];
   shellEnabled: boolean;
   execTimeoutMs: number;
@@ -38,6 +40,7 @@ export function loadConfig(envFile = ".env"): ClientConfig {
     clientId: process.env.CLIENT_ID ?? "local-dev-client",
     clientSecret: process.env.CLIENT_SECRET ?? "change-me-in-production",
     userId: process.env.USER_ID ?? "local-dev-user",
+    bridgePublicKeyPem: process.env.BRIDGE_PUBLIC_KEY_PEM?.trim() || null,
     approvedRoots: rawRoots.map((r) => resolve(r)),
     shellEnabled: (process.env.SHELL_ENABLED ?? "false") === "true",
     execTimeoutMs: Number(process.env.EXEC_TIMEOUT_MS ?? "30000"),

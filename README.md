@@ -72,6 +72,7 @@ pnpm dev
 | `BRIDGE_URL` | 云端桥接端点（生产用 `wss://b.zmzai.cloud/bridge`） |
 | `CLIENT_ID` / `CLIENT_SECRET` | 云端签发的客户端身份与签名密钥 |
 | `USER_ID` | 本机归属的用户标识，hello 中携带（签名覆盖）——云端据此把 Agent 请求路由到本机 |
+| `BRIDGE_PUBLIC_KEY_PEM` | 云端桥接端点公钥（验 welcome 签名，防伪造端点；生产必配，缺省跳过验签） |
 | `APPROVED_ROOTS` | 允许云端读写的目录根（逗号分隔，支持 `~`） |
 | `SHELL_ENABLED` | 是否允许 shell.exec（默认 false） |
 | `EXEC_TIMEOUT_MS` | 单次命令/文件操作超时 |
@@ -82,12 +83,13 @@ pnpm dev
 - **越界即拒**：文件操作经 `withinRoots` 校验，符号链接逃逸也会被拦。
 - **审批分级**：`fs.write`/`shell.exec` 必须用户授权；`fs.read` 低风险自动放行；`notify` 自动。
 - **审计不可删**：每次执行落盘 JSONL，含决策人（auto/user）、风险、耗时。
-- **密钥不下发**：`CLIENT_SECRET` 仅存客户端，用于给请求签名；云端用对称/非对称密钥验签。
+- **密钥不下发**：`CLIENT_SECRET` 仅存客户端，用于给 hello 签名；云端用对称/非对称密钥验签。
+- **防伪造端点**：hello 携带一次性 `nonce`（签名覆盖）；配置 `BRIDGE_PUBLIC_KEY_PEM` 后强制验签 welcome（ECDSA），失败即断开且不自动重连。
 
 ## 生产化待办（落地前）
 
 - [ ] `BRIDGE_URL` 强制 `wss`，并校验证书。
-- [ ] 握手升级为**非对称**：云端用私钥签 `welcome`，客户端用预置公钥验签（防伪造端点）。
+- [x] 握手升级为**非对称**：云端用私钥签 `welcome`，客户端用预置公钥验签（防伪造端点）。
 - [ ] 云端侧实现**会话路由**：一个 Client 对应一条出站隧道，云端 Agent 的请求按 `userId` 路由（bridge 侧已完成，待 relay 侧打通 `userId ↔ agent 会话`）。
 - [ ] 审批增加**超时默认拒绝**与「本次会话记住选择」。
 - [ ] 审计日志加密存储 / 可选上链存证（对齐 Arena 的「决策存证」思路）。

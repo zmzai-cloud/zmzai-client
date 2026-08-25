@@ -1,11 +1,13 @@
+import { randomBytes } from "node:crypto";
 import WebSocket from "ws";
-import { sign } from "./sign.js";
+import { sign, verifyWelcome } from "./sign.js";
 import {
   AuditRecord,
   Envelope,
   FsReadParams,
   FsWriteParams,
   NotifyParams,
+  PROTOCOL_VERSION,
   RiskLevel,
   ShellExecParams,
   ToolName,
@@ -40,6 +42,8 @@ export interface BridgeDeps {
   clientSecret: string;
   /** 本机归属的用户标识（hello 携带、被签名覆盖），云端据此路由 */
   userId: string;
+  /** 云端桥接端点公钥 PEM：配置后强制验签 welcome（防伪造云端端点）；null 跳过（本机联调） */
+  bridgePublicKeyPem: string | null;
   approvedRoots: string[];
   shellEnabled: boolean;
   execTimeoutMs: number;
@@ -63,6 +67,10 @@ export class BridgeClient {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
+  /** 本次握手使用的一次性 nonce（welcome 验签时比对，防重放） */
+  private pendingNonce: string | null = null;
+  /** welcome 验签失败视为不可恢复错误（端点不可信），不再自动重连 */
+  private fatal = false;
 
   constructor(private deps: BridgeDeps, auditPath: string) {
     this.audit = new AuditLog(auditPath);
@@ -74,6 +82,7 @@ export class BridgeClient {
 
   connect(): void {
     this.closedByUser = false;
+    this.fatal = false;
     this.open();
   }
 
@@ -103,18 +112,22 @@ export class BridgeClient {
 
     ws.on("open", () => {
       const ts = Date.now();
+      const nonce = randomBytes(16).toString("hex");
+      this.pendingNonce = nonce;
       const signature = sign(
         this.deps.clientId,
         this.deps.userId,
+        nonce,
         ts,
         this.deps.clientSecret,
       );
       ws.send(
         JSON.stringify({
           kind: "hello",
-          v: 2,
+          v: 3,
           clientId: this.deps.clientId,
           userId: this.deps.userId,
+          nonce,
           ts,
           signature,
         }),
@@ -153,19 +166,50 @@ export class BridgeClient {
     }
     const env = parsed.data;
     switch (env.kind) {
-      case "welcome":
+      case "welcome": {
+        // 防重放：welcome 必须回显本次握手 nonce
+        if (this.pendingNonce !== env.nonce) {
+          this.deps.onEvent({ type: "log", level: "error", msg: "welcome nonce 不匹配，疑似重放，断开连接" });
+          this.fatal = true;
+          this.ws?.close();
+          return;
+        }
+        // 防伪造端点：配置了云端公钥时强制验签 welcome
+        if (this.deps.bridgePublicKeyPem) {
+          const verified = verifyWelcome(
+            env.sessionId,
+            env.userId,
+            env.nonce,
+            env.ts,
+            env.signature,
+            this.deps.bridgePublicKeyPem,
+          );
+          if (!verified) {
+            this.deps.onEvent({
+              type: "log",
+              level: "error",
+              msg: "welcome 签名校验失败：连接端点不可信（可能被伪造），已断开且不再自动重连",
+            });
+            this.setState("error", "welcome 签名校验失败（端点不可信）");
+            this.fatal = true;
+            this.ws?.close();
+            return;
+          }
+        }
+        this.pendingNonce = null;
         this.setState("connected", `session=${env.sessionId}`);
         this.deps.onEvent({
           type: "log",
           level: "info",
-          msg: `已连接云端桥接，会话 ${env.sessionId}（userId=${env.userId}）`,
+          msg: `已连接云端桥接，会话 ${env.sessionId}（userId=${env.userId}${this.deps.bridgePublicKeyPem ? "，welcome 验签通过" : "，未配置公钥未验签"}）`,
         });
         break;
+      }
       case "tool_request":
         await this.handleToolRequest(env);
         break;
       case "ping":
-        this.send({ kind: "pong", v: 1, ts: Date.now() });
+        this.send({ kind: "pong", v: PROTOCOL_VERSION, ts: Date.now() });
         break;
       case "pong":
         break;
@@ -257,7 +301,7 @@ export class BridgeClient {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeat = setInterval(() => {
-      this.send({ kind: "ping", v: 1, ts: Date.now() });
+      this.send({ kind: "ping", v: PROTOCOL_VERSION, ts: Date.now() });
     }, HEARTBEAT_MS);
   }
 
@@ -267,7 +311,7 @@ export class BridgeClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.closedByUser) return;
+    if (this.closedByUser || this.fatal) return;
     this.deps.onEvent({ type: "log", level: "warn", msg: `${RECONNECT_MS}ms 后重连…` });
     this.reconnectTimer = setTimeout(() => this.open(), RECONNECT_MS);
   }

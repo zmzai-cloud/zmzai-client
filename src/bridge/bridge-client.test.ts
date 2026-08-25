@@ -24,7 +24,7 @@ function makeClient(overrides: Partial<BridgeDeps> = {}) {
   const events: BridgeEvent[] = [];
   // 优先取 overrides 提供的 mock（测试可能替换 askApproval/notify 行为），保证返回值与 deps 一致
   const notify = (overrides.notify ?? vi.fn()) as ReturnType<typeof vi.fn>;
-  const askApproval = (overrides.askApproval ?? vi.fn(async () => true)) as ReturnType<typeof vi.fn>;
+  const askApproval = (overrides.askApproval ?? vi.fn(async () => ({ allowed: true, decidedBy: "user" }))) as ReturnType<typeof vi.fn>;
   const deps: BridgeDeps = {
     bridgeUrl: "ws://127.0.0.1:1", // 各测试覆盖为真实服务器地址
     clientId: "test-client",
@@ -330,7 +330,7 @@ describe("工具请求", () => {
     const target = join(root, "rejected.txt");
     const { client, events, askApproval } = makeClient({
       bridgeUrl: `ws://127.0.0.1:${srv.port}`,
-      askApproval: vi.fn(async () => false),
+      askApproval: vi.fn(async () => ({ allowed: false, decidedBy: "user" }) as const),
     });
     client.connect();
     await handshake(srv, events);
@@ -353,6 +353,41 @@ describe("工具请求", () => {
     expect(result.error).toContain("拒绝");
     expect(result.audit.approved).toBe(false);
     expect(result.audit.decidedBy).toBe("user");
+    expect(askApproval).toHaveBeenCalledTimes(1);
+    client.disconnect();
+    await srv.close();
+  });
+
+  it("fs.write 策略兜底拒绝（policy：超时/无窗口）→ ok:false、decidedBy=policy、error 含策略默认拒绝", async () => {
+    const srv = await startServer();
+    const target = join(root, "policy-rejected.txt");
+    const { client, events, askApproval } = makeClient({
+      bridgeUrl: `ws://127.0.0.1:${srv.port}`,
+      // 模拟审批超时 / 无窗口可弹：策略兜底拒绝，决定来源为 policy（非用户主动）
+      askApproval: vi.fn(async () => ({ allowed: false, decidedBy: "policy" }) as const),
+    });
+    client.connect();
+    await handshake(srv, events);
+    srv.connections[0].send(
+      JSON.stringify({
+        kind: "tool_request",
+        v: PROTOCOL_VERSION,
+        id: "t3b",
+        tool: "fs.write",
+        params: { path: target, content: "x" },
+        risk: "high",
+        issuedAt: Date.now(),
+      }),
+    );
+    const result = (await waitFor(
+      () => srv.messages.find((m) => (m as { id?: string; kind?: string }).kind === "tool_result" && (m as { id?: string }).id === "t3b"),
+      "tool_result",
+    )) as { ok: boolean; error: string; audit: { approved: boolean; decidedBy: string } };
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("策略默认拒绝");
+    expect(result.audit.approved).toBe(false);
+    // 关键：策略兜底必须记为 policy，不能再误标成 user
+    expect(result.audit.decidedBy).toBe("policy");
     expect(askApproval).toHaveBeenCalledTimes(1);
     client.disconnect();
     await srv.close();

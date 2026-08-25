@@ -31,6 +31,17 @@ export interface ApprovalRequest {
   paramsSummary: string;
 }
 
+/**
+ * 审批结果：除了是否允许，还要记录「是谁做的决定」。
+ * - user：用户主动批准 / 拒绝
+ * - policy：超时默认拒绝、或无窗口可弹（兜底拒绝）——并非用户主动决定
+ * 审计记录据此区分 `decidedBy`，避免把策略兜底误标成用户操作。
+ */
+export interface ApprovalDecision {
+  allowed: boolean;
+  decidedBy: "user" | "policy";
+}
+
 export type BridgeEvent =
   | { type: "status"; state: BridgeState; detail?: string }
   | { type: "log"; level: "info" | "warn" | "error"; msg: string }
@@ -50,8 +61,8 @@ export interface BridgeDeps {
   shellEnabled: boolean;
   execTimeoutMs: number;
   notify: (title: string, body: string, urgency?: "low" | "normal" | "critical") => void;
-  /** 需要用户审批时由主进程实现：弹出 UI 并等待用户决定，返回是否允许 */
-  askApproval: (req: ApprovalRequest) => Promise<boolean>;
+  /** 需要用户审批时由主进程实现：弹出 UI 并等待用户决定，返回审批结果（含决定来源） */
+  askApproval: (req: ApprovalRequest) => Promise<ApprovalDecision>;
   onEvent: (e: BridgeEvent) => void;
   /** 测试注入：心跳间隔（默认 25s）与断线重连间隔（默认 5s） */
   heartbeatMs?: number;
@@ -261,16 +272,18 @@ export class BridgeClient {
 
     try {
       if (this.needsApproval(env.tool, env.risk)) {
-        const allowed = await this.deps.askApproval({
+        const decision = await this.deps.askApproval({
           id: env.id,
           tool: env.tool,
           risk: env.risk,
           summary: paramsSummary,
           paramsSummary,
         });
-        record.approved = allowed;
-        record.decidedBy = "user";
-        if (!allowed) throw new Error("用户拒绝执行");
+        record.approved = decision.allowed;
+        record.decidedBy = decision.decidedBy;
+        if (!decision.allowed) {
+          throw new Error(decision.decidedBy === "policy" ? "审批超时，已按策略默认拒绝执行" : "用户拒绝执行");
+        }
       } else {
         record.approved = true;
         record.decidedBy = "auto";

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Notification, Tray, Menu, ipcMain, nativeImage } from "electron";
 import { join } from "node:path";
-import { BridgeClient, type ApprovalRequest, type BridgeEvent, type BridgeState } from "../bridge/bridge-client.js";
+import { BridgeClient, type ApprovalDecision, type ApprovalRequest, type BridgeEvent, type BridgeState } from "../bridge/bridge-client.js";
 import { loadConfig, type ClientConfig } from "../bridge/config.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -65,13 +65,14 @@ function forwardEvent(e: BridgeEvent): void {
   mainWindow?.webContents.send("bridge:event", e);
 }
 
-function askApproval(req: ApprovalRequest): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
+function askApproval(req: ApprovalRequest): Promise<ApprovalDecision> {
+  return new Promise<ApprovalDecision>((resolve) => {
     // 审批超时默认拒绝：弹窗挂起时不静默放行，也不让 dispatch 无限悬置
     const timer = setTimeout(() => {
       if (pendingApprovals.has(req.id)) {
         pendingApprovals.delete(req.id);
-        resolve(false);
+        // 超时由策略兜底，决定来源记为 policy（非用户主动）
+        resolve({ allowed: false, decidedBy: "policy" });
         mainWindow?.webContents.send("bridge:event", {
           type: "log",
           level: "warn",
@@ -81,7 +82,8 @@ function askApproval(req: ApprovalRequest): Promise<boolean> {
     }, approvalTimeoutMs);
     pendingApprovals.set(req.id, (allowed) => {
       clearTimeout(timer);
-      resolve(allowed);
+      // 用户主动在弹窗中做出的决定，来源记为 user
+      resolve({ allowed, decidedBy: "user" });
     });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("bridge:approval-request", req);
@@ -89,7 +91,8 @@ function askApproval(req: ApprovalRequest): Promise<boolean> {
     } else {
       clearTimeout(timer);
       pendingApprovals.delete(req.id);
-      resolve(false);
+      // 无窗口可弹，兜底拒绝，来源记为 policy
+      resolve({ allowed: false, decidedBy: "policy" });
     }
   });
 }

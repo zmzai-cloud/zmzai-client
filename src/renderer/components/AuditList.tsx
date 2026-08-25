@@ -15,7 +15,13 @@ export function AuditList({ items }: { items: AuditRecord[] }) {
             <span className="audit-tool">{r.tool}</span>
             <span className="audit-time">{fmt(r.startedAt)}</span>
             <span className="audit-decision">
-              {r.decidedBy === "user" ? (r.approved ? "用户授权" : "用户拒绝") : "自动"}
+              {r.decidedBy === "user"
+                ? r.approved
+                  ? "用户授权"
+                  : "用户拒绝"
+                : r.decidedBy === "policy"
+                  ? "策略默认拒绝"
+                  : "自动"}
             </span>
           </div>
           <div className="audit-summary">{r.summary}</div>

@@ -22,6 +22,10 @@ export interface ClientConfig {
   userId: string;
   /** 云端桥接端点的公钥 PEM（验 welcome 签名，防伪造云端端点）。生产必须配置；缺省跳过验签。 */
   bridgePublicKeyPem: string | null;
+  /** 是否允许非 wss 连接（仅本机联调；生产必须 wss + 严格证书校验） */
+  allowInsecureWs: boolean;
+  /** 审批弹窗超时（毫秒），超时默认拒绝执行 */
+  approvalTimeoutMs: number;
   approvedRoots: string[];
   shellEnabled: boolean;
   execTimeoutMs: number;
@@ -41,6 +45,8 @@ export function loadConfig(envFile = ".env"): ClientConfig {
     clientSecret: process.env.CLIENT_SECRET ?? "change-me-in-production",
     userId: process.env.USER_ID ?? "local-dev-user",
     bridgePublicKeyPem: process.env.BRIDGE_PUBLIC_KEY_PEM?.trim() || null,
+    allowInsecureWs: (process.env.ALLOW_INSECURE_WS ?? "false") === "true",
+    approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? "120000"),
     approvedRoots: rawRoots.map((r) => resolve(r)),
     shellEnabled: (process.env.SHELL_ENABLED ?? "false") === "true",
     execTimeoutMs: Number(process.env.EXEC_TIMEOUT_MS ?? "30000"),

@@ -11,6 +11,8 @@ let lastStatus: BridgeState = "disconnected";
 let lastStatusDetail: string | undefined;
 
 const pendingApprovals = new Map<string, (allowed: boolean) => void>();
+/** 审批弹窗超时（毫秒），由 config.approvalTimeoutMs 注入；超时默认拒绝 */
+let approvalTimeoutMs = 120_000;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -65,12 +67,28 @@ function forwardEvent(e: BridgeEvent): void {
 
 function askApproval(req: ApprovalRequest): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    pendingApprovals.set(req.id, resolve);
+    // 审批超时默认拒绝：弹窗挂起时不静默放行，也不让 dispatch 无限悬置
+    const timer = setTimeout(() => {
+      if (pendingApprovals.has(req.id)) {
+        pendingApprovals.delete(req.id);
+        resolve(false);
+        mainWindow?.webContents.send("bridge:event", {
+          type: "log",
+          level: "warn",
+          msg: `审批超时（${approvalTimeoutMs}ms），已默认拒绝: ${req.tool} ${req.summary}`,
+        });
+      }
+    }, approvalTimeoutMs);
+    pendingApprovals.set(req.id, (allowed) => {
+      clearTimeout(timer);
+      resolve(allowed);
+    });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("bridge:approval-request", req);
       notify(`需要授权：${req.tool}`, req.summary, req.risk === "high" ? "critical" : "normal");
     } else {
-      // 没有可用 UI 时默认拒绝，避免静默执行
+      clearTimeout(timer);
+      pendingApprovals.delete(req.id);
       resolve(false);
     }
   });
@@ -85,6 +103,7 @@ function buildBridge(config: ClientConfig): BridgeClient {
       clientSecret: config.clientSecret,
       userId: config.userId,
       bridgePublicKeyPem: config.bridgePublicKeyPem,
+      allowInsecureWs: config.allowInsecureWs,
       approvedRoots: config.approvedRoots,
       shellEnabled: config.shellEnabled,
       execTimeoutMs: config.execTimeoutMs,
@@ -160,6 +179,7 @@ function registerIpc(config: ClientConfig): void {
 
 app.whenReady().then(() => {
   const config = loadConfig();
+  approvalTimeoutMs = config.approvalTimeoutMs;
   createWindow();
   createTray();
   registerIpc(config);

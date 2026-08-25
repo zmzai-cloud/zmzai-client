@@ -44,6 +44,8 @@ export interface BridgeDeps {
   userId: string;
   /** 云端桥接端点公钥 PEM：配置后强制验签 welcome（防伪造云端端点）；null 跳过（本机联调） */
   bridgePublicKeyPem: string | null;
+  /** 是否允许非 wss 连接（仅本机联调；生产必须 wss + 严格证书校验） */
+  allowInsecureWs: boolean;
   approvedRoots: string[];
   shellEnabled: boolean;
   execTimeoutMs: number;
@@ -99,6 +101,27 @@ export class BridgeClient {
 
   private open(): void {
     this.setState("connecting");
+    // wss 强制：非 wss 端点视为配置错误（本机联调可显式 ALLOW_INSECURE_WS=true），
+    // 证书校验保持 ws 默认严格（不传 rejectUnauthorized）。端点不可信则不连、不重连。
+    let url: URL;
+    try {
+      url = new URL(this.deps.bridgeUrl);
+    } catch {
+      this.deps.onEvent({ type: "log", level: "error", msg: `BRIDGE_URL 非法: ${this.deps.bridgeUrl}` });
+      this.setState("error", "BRIDGE_URL 非法");
+      this.fatal = true;
+      return;
+    }
+    if (url.protocol !== "wss:" && !this.deps.allowInsecureWs) {
+      this.deps.onEvent({
+        type: "log",
+        level: "error",
+        msg: "BRIDGE_URL 必须为 wss://（仅本机联调可设 ALLOW_INSECURE_WS=true），已停止连接",
+      });
+      this.setState("error", "BRIDGE_URL 必须为 wss://（生产环境）");
+      this.fatal = true;
+      return;
+    }
     let ws: WebSocket;
     try {
       ws = new WebSocket(this.deps.bridgeUrl, { handshakeTimeout: HANDSHAKE_TIMEOUT_MS });
@@ -260,14 +283,28 @@ export class BridgeClient {
       record.finishedAt = Date.now();
       this.audit.record(record);
       this.deps.onEvent({ type: "audit", record });
-      this.send({ kind: "tool_result", v: 1, id: env.id, ok: true, data, audit: record });
+      this.send({ kind: "tool_result", v: PROTOCOL_VERSION, id: env.id, ok: true, data, audit: record });
     } catch (err) {
       record.finishedAt = Date.now();
       this.audit.record(record);
       this.deps.onEvent({ type: "audit", record });
       const message = err instanceof Error ? err.message : String(err);
-      this.send({ kind: "tool_result", v: 1, id: env.id, ok: false, error: message, audit: record });
+      this.send({ kind: "tool_result", v: PROTOCOL_VERSION, id: env.id, ok: false, error: message, audit: record });
     }
+    this.uploadAudit(record);
+  }
+
+  /** 审计上送：每次执行落盘后，经 WS 把审计记录异步发给云端（供跨端复盘）。尽力而为。 */
+  private uploadAudit(record: AuditRecord): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.send({
+      kind: "audit_report",
+      v: PROTOCOL_VERSION,
+      clientId: this.deps.clientId,
+      userId: this.deps.userId,
+      audit: record,
+      ts: Date.now(),
+    });
   }
 
   /** 风险策略：决定是否需要本地用户审批 */

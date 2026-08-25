@@ -17,13 +17,13 @@ export class AuditLog {
       /* 忽略目录创建失败，后续落盘会报错但不影响运行 */
     }
     if (existsSync(path)) {
-      try {
-        for (const line of readFileSync(path, "utf8").split("\n")) {
-          if (!line.trim()) continue;
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
           this.mem.push(AuditRecord.parse(JSON.parse(line)));
+        } catch {
+          /* 损坏行跳过，不中断其余记录加载 */
         }
-      } catch {
-        /* 损坏行忽略 */
       }
     }
   }

@@ -62,8 +62,11 @@ export async function execShell(ctx: CapabilityContext, p: ShellExecParams) {
       truncated: out.length + errOut.length > MAX_OUTPUT,
     };
   } catch (err) {
-    const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-    if (e.code === "ETIMEDOUT") throw new Error(`命令超时（>${timeout}ms）`);
+    const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
+    // exec 超时：Node 抛的错 code 为 null，标志是 killed=true + signal（不是 ETIMEDOUT）
+    if (e.killed || e.signal === "SIGTERM" || e.signal === "SIGKILL") {
+      throw new Error(`命令超时（>${timeout}ms）`);
+    }
     // 命令非零退出视为已执行，带 stderr 返回；真正异常（无 stdout/stderr）才抛出
     if (e.stdout === undefined && e.stderr === undefined) throw e;
     const out = String(e.stdout ?? "");

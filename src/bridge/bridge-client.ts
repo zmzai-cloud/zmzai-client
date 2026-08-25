@@ -53,6 +53,9 @@ export interface BridgeDeps {
   /** 需要用户审批时由主进程实现：弹出 UI 并等待用户决定，返回是否允许 */
   askApproval: (req: ApprovalRequest) => Promise<boolean>;
   onEvent: (e: BridgeEvent) => void;
+  /** 测试注入：心跳间隔（默认 25s）与断线重连间隔（默认 5s） */
+  heartbeatMs?: number;
+  reconnectMs?: number;
 }
 
 const HEARTBEAT_MS = 25_000;
@@ -147,7 +150,7 @@ export class BridgeClient {
       ws.send(
         JSON.stringify({
           kind: "hello",
-          v: 3,
+          v: PROTOCOL_VERSION,
           clientId: this.deps.clientId,
           userId: this.deps.userId,
           nonce,
@@ -339,7 +342,7 @@ export class BridgeClient {
     this.stopHeartbeat();
     this.heartbeat = setInterval(() => {
       this.send({ kind: "ping", v: PROTOCOL_VERSION, ts: Date.now() });
-    }, HEARTBEAT_MS);
+    }, this.deps.heartbeatMs ?? HEARTBEAT_MS);
   }
 
   private stopHeartbeat(): void {
@@ -349,8 +352,9 @@ export class BridgeClient {
 
   private scheduleReconnect(): void {
     if (this.closedByUser || this.fatal) return;
-    this.deps.onEvent({ type: "log", level: "warn", msg: `${RECONNECT_MS}ms 后重连…` });
-    this.reconnectTimer = setTimeout(() => this.open(), RECONNECT_MS);
+    const delay = this.deps.reconnectMs ?? RECONNECT_MS;
+    this.deps.onEvent({ type: "log", level: "warn", msg: `${delay}ms 后重连…` });
+    this.reconnectTimer = setTimeout(() => this.open(), delay);
   }
 }
 

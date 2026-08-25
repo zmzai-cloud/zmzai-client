@@ -18,6 +18,7 @@ export type BridgeEvent =
 export interface ConfigSnapshot {
   bridgeUrl: string;
   clientId: string;
+  userId: string;
   approvedRoots: string[];
   shellEnabled: boolean;
 }

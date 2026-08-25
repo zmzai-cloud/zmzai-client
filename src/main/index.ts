@@ -83,6 +83,7 @@ function buildBridge(config: ClientConfig): BridgeClient {
       bridgeUrl: config.bridgeUrl,
       clientId: config.clientId,
       clientSecret: config.clientSecret,
+      userId: config.userId,
       approvedRoots: config.approvedRoots,
       shellEnabled: config.shellEnabled,
       execTimeoutMs: config.execTimeoutMs,
@@ -129,6 +130,7 @@ function registerIpc(config: ClientConfig): void {
     config: {
       bridgeUrl: config.bridgeUrl,
       clientId: config.clientId,
+      userId: config.userId,
       approvedRoots: config.approvedRoots,
       shellEnabled: config.shellEnabled,
     },

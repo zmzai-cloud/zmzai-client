@@ -20,6 +20,7 @@ export default function App() {
   const [config, setConfig] = useState<{
     bridgeUrl: string;
     clientId: string;
+    userId: string;
     approvedRoots: string[];
     shellEnabled: boolean;
   } | null>(null);

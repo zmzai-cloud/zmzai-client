@@ -23,6 +23,10 @@ export function SettingsPanel({
         <input value={config.clientId} disabled />
       </label>
       <label>
+        User ID（归属用户，云端据此路由）
+        <input value={config.userId} disabled />
+      </label>
+      <label>
         已批准目录（每行一个，支持 ~）
         <textarea value={roots} onChange={(e) => setRoots(e.target.value)} rows={4} />
       </label>

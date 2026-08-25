@@ -38,6 +38,8 @@ export interface BridgeDeps {
   bridgeUrl: string;
   clientId: string;
   clientSecret: string;
+  /** 本机归属的用户标识（hello 携带、被签名覆盖），云端据此路由 */
+  userId: string;
   approvedRoots: string[];
   shellEnabled: boolean;
   execTimeoutMs: number;
@@ -101,8 +103,22 @@ export class BridgeClient {
 
     ws.on("open", () => {
       const ts = Date.now();
-      const signature = sign(this.deps.clientId, ts, this.deps.clientSecret);
-      ws.send(JSON.stringify({ kind: "hello", v: 1, clientId: this.deps.clientId, ts, signature }));
+      const signature = sign(
+        this.deps.clientId,
+        this.deps.userId,
+        ts,
+        this.deps.clientSecret,
+      );
+      ws.send(
+        JSON.stringify({
+          kind: "hello",
+          v: 2,
+          clientId: this.deps.clientId,
+          userId: this.deps.userId,
+          ts,
+          signature,
+        }),
+      );
       this.startHeartbeat();
       this.deps.onEvent({ type: "log", level: "info", msg: "WebSocket 已打开，正在握手…" });
     });
@@ -139,7 +155,11 @@ export class BridgeClient {
     switch (env.kind) {
       case "welcome":
         this.setState("connected", `session=${env.sessionId}`);
-        this.deps.onEvent({ type: "log", level: "info", msg: `已连接云端桥接，会话 ${env.sessionId}` });
+        this.deps.onEvent({
+          type: "log",
+          level: "info",
+          msg: `已连接云端桥接，会话 ${env.sessionId}（userId=${env.userId}）`,
+        });
         break;
       case "tool_request":
         await this.handleToolRequest(env);

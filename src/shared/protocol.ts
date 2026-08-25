@@ -5,12 +5,12 @@
  * - 客户端（本机）主动建立【出站】WebSocket 到云端桥接端点，云端 Agent 经此下发工具请求。
  *   这样客户端处于 NAT/防火墙后也能被触达（反向隧道模式）。
  * - 所有交互包裹在统一 Envelope 里，带协议版本 v 与消息 id。
- * - 握手用 HMAC-SHA256 签名；高风险操作在本地触发审批，审批通过后才执行。
+ * - 握手用 HMAC-SHA256 签名（覆盖 clientId + userId + ts）；高风险操作在本地触发审批，审批通过后才执行。
  * - 本文件保持「纯」依赖（仅 zod），可在主进程与渲染进程同时 import。
  */
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 /** 本地可向云端暴露的能力 */
 export const ToolName = z.enum(["fs.read", "fs.write", "shell.exec", "notify"]);
@@ -65,19 +65,22 @@ export type AuditRecord = z.infer<typeof AuditRecord>;
 
 /** 统一信封：用 kind 区分消息类型 */
 export const Envelope = z.discriminatedUnion("kind", [
-  // 客户端 → 云端：握手，携带 HMAC 签名
+  // 客户端 → 云端：握手，携带 HMAC 签名；userId 声明本机归属用户（云端据此路由）
   z.object({
     kind: z.literal("hello"),
     v: z.literal(PROTOCOL_VERSION),
     clientId: z.string().min(1),
+    /** 本机归属的用户标识（被签名覆盖，防篡改） */
+    userId: z.string().min(1),
     ts: z.number().int().positive(),
     signature: z.string().min(1),
   }),
-  // 云端 → 客户端：接受握手，分配会话
+  // 云端 → 客户端：接受握手，分配会话并回显归属用户
   z.object({
     kind: z.literal("welcome"),
     v: z.literal(PROTOCOL_VERSION),
     sessionId: z.string().min(1),
+    userId: z.string().min(1),
     ts: z.number().int().positive(),
     signature: z.string().min(1),
   }),

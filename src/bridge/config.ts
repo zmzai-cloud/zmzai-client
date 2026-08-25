@@ -18,6 +18,8 @@ export interface ClientConfig {
   bridgeUrl: string;
   clientId: string;
   clientSecret: string;
+  /** 本机归属的用户标识（hello 携带、被签名覆盖），云端据此路由 Agent 请求到本机 */
+  userId: string;
   approvedRoots: string[];
   shellEnabled: boolean;
   execTimeoutMs: number;
@@ -35,6 +37,7 @@ export function loadConfig(envFile = ".env"): ClientConfig {
     bridgeUrl: process.env.BRIDGE_URL ?? "wss://b.zmzai.cloud/bridge",
     clientId: process.env.CLIENT_ID ?? "local-dev-client",
     clientSecret: process.env.CLIENT_SECRET ?? "change-me-in-production",
+    userId: process.env.USER_ID ?? "local-dev-user",
     approvedRoots: rawRoots.map((r) => resolve(r)),
     shellEnabled: (process.env.SHELL_ENABLED ?? "false") === "true",
     execTimeoutMs: Number(process.env.EXEC_TIMEOUT_MS ?? "30000"),
